@@ -1,0 +1,123 @@
+\documentclass{article}
+\usepackage{amsmath, amssymb} % For math symbols and environments
+\usepackage{graphicx}      % To include figures if needed
+\usepackage{url}           % For URLs
+
+% Define commands for common terms if desired
+\newcommand{\minlp}{\textsc{minlp}}
+\newcommand{\lqn}{\textsc{lqn}}
+
+\begin{document}
+
+% Add title, author, abstract etc. here if this is the main document
+% \title{Resource Allocation Optimization for Layered Queueing Networks}
+% \author{Your Name(s)}
+% \date{\today}
+% \maketitle
+
+\section{System Model and Optimization Problem}
+\label{sec:model_opt}
+
+This section introduces the system model based on Layered Queueing Networks (\lqn{}) used to represent the target application's structure and dynamics. Subsequently, it details the formulation of the resource allocation problem as a Mixed-Integer Non-Linear Programming (\minlp{}) problem, aimed at optimizing system configuration for cost and performance.
+
+\subsection{Layered Queueing Network Model}
+\label{subsec:lqn_model}
+
+We represent the system using an \lqn{} model, a formalism well-suited for performance prediction of concurrent and distributed software systems~\cite{franks2009layered}. The model comprises \(M\) stations, representing software tasks, entries, or hardware resources, and \(N\) distinct transitions modelling the movement or interaction between these stations.
+
+The key components of our \lqn{} model are:
+
+\begin{itemize}
+    \item \textbf{Network Topology:} The interactions between stations are defined by a \emph{Jump Matrix} \(J \in \mathbb{Z}^{N \times M}\). An entry \(J_{k,i} = -1\) signifies that station \(i\) is the source for transition \(k\), while \(J_{k,j} = 1\) indicates that station \(j\) is the destination.
+    \item \textbf{Routing Probabilities:} A matrix \(P = [p_{ij}] \in \mathbb{R}^{M \times M}_{\ge 0}\) defines the probability \(p_{ij}\) that a job, upon completing service at station \(i\), proceeds next to station \(j\).
+    \item \textbf{Service Stations:}
+        \begin{itemize}
+            \item Stations represent processing entities. Each station \(i\) is characterized by a service rate \(\mu_i\) and an allocation of \(n_i\) processing cores.
+            \item Station 1 is treated as a fixed entity, potentially representing the user population or a system entry point, with a constant service rate \(\mu_1\) (defined by the first element of `PossibleServiceRates[1]`) and a pre-determined number of cores \(n_1\) (e.g., 1000 in our implementation).
+            \item Stations \(i \in \{2, \dots, M\}\) are configurable. Their number of cores \(n_i\) is a decision variable (\(n_i \ge \underline{N}_{c,i}\)), and their service rate \(\mu_i\) can be selected from a discrete set of options \(\text{Rates}_i\). Each rate option \(k\) for station \(i\) incurs a specific cost factor \(C_{sr}[i,k]\).
+        \end{itemize}
+    \item \textbf{System State:} The model's state is captured by the vector \(X = [X_1, \dots, X_M]\), where \(X_i\) represents the average number of jobs (queue length including those in service) at station \(i\) in steady-state.
+    \item \textbf{Steady-State Dynamics:} The model operates under steady-state assumptions. The transition rates \(T = [T_1, \dots, T_N]\) depend on the station states (\(X_i\)), allocated resources (\(n_i, \mu_i\)), and routing probabilities (\(p_{ij}\)). The system reaches steady-state when the net flow into each station is zero, implying that the population derivatives \(dX = J^T T\) are close to zero (\(\|dX\| \le \epsilon_{tol}\)). Our analysis focuses on this equilibrium condition. Performance metrics, such as system throughput (\(\mathcal{T}\)), can be derived from the steady-state transition rates and queue lengths. In our specific model, we approximate the primary throughput using \(\mathcal{T} \approx \mu_1 X_1\).
+\end{itemize}
+% Consider adding a figure reference if you have an LQN diagram
+% (see Figure~\ref{fig:my_lqn_model}).
+
+\subsection{The Optimization Problem}
+\label{subsec:optimization}
+
+Building upon the steady-state \lqn{} model, we formulate an optimization problem to determine the resource configuration (cores \(n_i\) and service rates \(\mu_i\) for \(i \ge 2\)) that optimizes a trade-off between operational costs and system performance for a given workload \(L\). This is formulated as an \minlp{}.
+
+\paragraph{Decision Variables:}
+\begin{itemize}
+    \item \(n_i \in \mathbb{R}_{\ge \underline{N}_{c,i}}\): Number of cores allocated to station \(i\), for \(i \in \{2, \dots, M\}\). (\texttt{nc[i]})
+    \item \(z_{i,k} \in \{0, 1\}\): Binary variable, where \(z_{i,k}=1\) if service rate option \(k\) is selected for station \(i\), and 0 otherwise, for \(i \in \{2, \dots, M\}\) and \(k \in \{1, \dots, |\text{Rates}_i|\}\). (\texttt{z[i,k]})
+    \item Auxiliary continuous variables: effective service rates \(\mu_i\) (for \(i \ge 2\)), transition rates \(T_k\), steady-state queue lengths \(X_i\), and population derivatives \(dX_i\).
+\end{itemize}
+
+\paragraph{Objective Function:}
+The objective is to minimize a weighted function balancing cost and a performance metric related to throughput deviation from the target workload:
+\begin{equation}
+\label{eq:opt_objective}
+\min_{n, z} \quad (1 - w_p) \times \text{TotalCost}(n, z) + w_p \times (\mu_1 X_1 - L)^2
+\end{equation}
+where:
+\begin{itemize}
+    \item \(\text{TotalCost}(n, z)\) is the operational cost, primarily determined by the allocated cores and the selected service rates for stations \(i \ge 2\):
+    \[ \text{TotalCost} = \sum_{i=2}^M n_i \sum_{k=1}^{|\text{Rates}_i|} z_{i,k} C_{sr}[i,k] \]
+    (Note: The provided Julia code seems to not include `CoreCosts` in the objective; this formula reflects `station_costs` based on `ServiceRateCosts` and `nc` only).
+    \item \((\mu_1 X_1 - L)^2\) penalizes the squared difference between the approximate system throughput \(\mu_1 X_1\) and the target total queue length \(L\), aiming to align throughput with the overall workload.
+    \item \(w_p\) (\texttt{PerformanceWeight}) is a user-defined weight (\(0 \le w_p \le 1\)) controlling the emphasis on minimizing the performance penalty versus minimizing cost (\(1-w_p\) is \texttt{CostWeight}).
+\end{itemize}
+
+\paragraph{Constraints:}
+The optimization is subject to the following constraints derived from the \lqn{} model's steady-state behavior and resource limitations:
+\begin{enumerate}
+    \item \textbf{Service Rate Configuration (for \(i \ge 2\)):} Ensures exactly one rate is chosen per station and defines its effective rate \(\mu_i\).
+    \begin{align}
+        \sum_{k=1}^{|\text{Rates}_i|} z_{i,k} &= 1 \quad \forall i \in \{2, \dots, M\} \\
+        \mu_i &= \sum_{k=1}^{|\text{Rates}_i|} z_{i,k} \times \text{Rates}_i[k] \quad \forall i \in \{2, \dots, M\}
+    \end{align}
+    \item \textbf{Transition Rates:} Define the flow rates \(T_k\) based on the source station (\(s\)), destination (\(d\)), state, resources, and routing probability \(p_{sd}\).
+    \begin{align}
+        T_k &= \mu_1 X_s p_{sd} \quad \text{if source } s=1 \text{ for transition } k \\
+        T_k &= \mu_s n_s p_{sd} \quad \text{if source } s \ge 2 \text{ for transition } k
+        \label{eq:trans_rate_constr}
+    \end{align}
+    (Note: Eq.~\eqref{eq:trans_rate_constr} simplifies the implementation detail where \(k\) directly links a specific \(s,d\) pair).
+    \item \textbf{Population Dynamics and Steady State:} Enforces flow conservation and the steady-state condition.
+    \begin{align}
+        dX &= J^T T \\
+        -\epsilon_{tol} \le dX_i &\le \epsilon_{tol} \quad \forall i \in \{1, \dots, M\}
+    \end{align}
+    \item \textbf{Queue Lengths:} Basic stability condition and optional total population constraint.
+    \begin{align}
+        X_i &\ge n_i \quad \forall i \in \{2, \dots, M\} \\
+        \sum_{i=1}^M X_i &= L \quad \text{(if } L \text{ is specified)}
+    \end{align}
+    \item \textbf{Resource Limits:} Minimum and optional maximum core constraints.
+    \begin{align}
+        n_i &\ge \underline{N}_{c,i} \quad \forall i \in \{2, \dots, M\} \\
+        \sum_{i=2}^M n_i &\le \overline{N}_{c} \quad \text{(if } \overline{N}_{c} \text{ is specified)}
+    \end{align}
+\end{enumerate}
+
+This \minlp{} formulation captures the essential trade-offs in the system. We employ the SCIP solver~\cite{scip} via JuMP~\cite{JuMP} to find locally optimal solutions for the decision variables (\(n_i, z_{i,k}\)), yielding cost-effective configurations that meet performance goals under varying workloads \(L\). The inherent non-linearities and discrete choices make global optimality computationally challenging, motivating the use of specialized \minlp{} solvers.
+
+% Add references using BibTeX or directly
+\begin{thebibliography}{9}
+    \bibitem{franks2009layered}
+    G. Franks, et al. Layered Queuing Networks. In \emph{Performance evaluation: metrics, models and benchmarks}, Springer, 2009.
+
+    \bibitem{scip}
+    Gamrath, G., et al. The SCIP Optimization Suite 7.0. ZIB-Report 20-10, 2020.
+
+    \bibitem{JuMP}
+    Dunning, I., Huchette, J., Lubin, M. JuMP: A Modeling Language for Mathematical Optimization. \emph{SIAM Review}, 59(2), 295-320, 2017.
+    
+    % Add other relevant citations from your work or the example
+    % \bibitem{kurtz1970solutions} Kurtz, T. G. Solutions of ordinary differential equations as limits of pure jump Markov processes. Journal of Applied Probability, 1970.
+    % \bibitem{tribastone2012fluid} Tribastone, M., et al. Fluid approximation of queueing networks with heterogeneous nodes. Performance Evaluation, 2012.
+    % ... other citations from the example paper if relevant ...
+\end{thebibliography}
+
+\end{document}
